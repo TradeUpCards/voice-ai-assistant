@@ -16,6 +16,12 @@ class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(instructions="You are a helpful voice AI assistant powered by Google Gemini. Be conversational, friendly, and helpful. Keep responses concise but informative.")
 
+async def request_fnc(req: agents.JobRequest):
+    await req.accept(
+        name="Echo-agent",  # This sets the display name
+        identity="Echo (AI)"
+    )
+
 async def entrypoint(ctx: agents.JobContext):
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
@@ -41,4 +47,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
 if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    agents.cli.run_app(agents.WorkerOptions(
+        entrypoint_fnc=entrypoint,
+        request_fnc=request_fnc
+    ))
