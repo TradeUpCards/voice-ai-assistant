@@ -6,13 +6,13 @@ from livekit.plugins import (
     deepgram,
     cartesia,
     silero,
-    noise_cancellation,
 )
 from livekit.plugins.turn_detector.multilingual import MultilingualModel 
 import os
 import asyncio
 from aiohttp import web
 import threading
+import time
 
 load_dotenv()
 
@@ -41,9 +41,6 @@ async def entrypoint(ctx: agents.JobContext):
     await session.start(
         room=ctx.room,
         agent=Assistant(),
-        room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC(),
-        ),
     )
 
     await session.generate_reply(
@@ -55,21 +52,35 @@ async def health_check(request):
     return web.Response(text="OK", status=200)
 
 async def start_web_server():
+    port = int(os.environ.get('PORT', 10000))
     app = web.Application()
     app.router.add_get('/health', health_check)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get('PORT', 8000)))
+    site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print(f"Health check server running on port {os.environ.get('PORT', 8000)}")
+    print(f"Health check server running on port {port}")
+    return runner
 
 def run_web_server():
-    asyncio.run(start_web_server())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    runner = loop.run_until_complete(start_web_server())
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        loop.run_until_complete(runner.cleanup())
+        loop.close()
 
 if __name__ == "__main__":
     # Start health check server in a separate thread
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
+    
+    # Give the web server a moment to start up
+    time.sleep(2)
     
     # Run the LiveKit agent
     agents.cli.run_app(agents.WorkerOptions(

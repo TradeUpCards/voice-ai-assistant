@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: w3stream-voice-agent-test
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements-minimal.txt
+    startCommand: python test_server.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.1
