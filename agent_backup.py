@@ -8,11 +8,7 @@ from livekit.plugins import (
     silero,
     noise_cancellation,
 )
-from livekit.plugins.turn_detector.multilingual import MultilingualModel 
-import os
-import asyncio
-from aiohttp import web
-import threading
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 load_dotenv()
 
@@ -50,28 +46,7 @@ async def entrypoint(ctx: agents.JobContext):
         instructions="Greet the user warmly and offer your assistance. Mention that you're powered by Google Gemini and ready to help with any questions or tasks."
     )
 
-# Health check endpoint
-async def health_check(request):
-    return web.Response(text="OK", status=200)
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/health', health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get('PORT', 8000)))
-    await site.start()
-    print(f"Health check server running on port {os.environ.get('PORT', 8000)}")
-
-def run_web_server():
-    asyncio.run(start_web_server())
-
 if __name__ == "__main__":
-    # Start health check server in a separate thread
-    web_thread = threading.Thread(target=run_web_server, daemon=True)
-    web_thread.start()
-    
-    # Run the LiveKit agent
     agents.cli.run_app(agents.WorkerOptions(
         entrypoint_fnc=entrypoint,
         request_fnc=request_fnc
