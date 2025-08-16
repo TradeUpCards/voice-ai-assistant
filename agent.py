@@ -79,8 +79,18 @@ def download_models():
     """Download required model files for the turn detector"""
     print("Downloading required model files...")
     try:
-        # This will download the turn detector model
-        MultilingualModel()
+        # Import and initialize the turn detector to trigger model download
+        from livekit.plugins.turn_detector.base import _download_from_hf_hub
+        from livekit.plugins.turn_detector.base import HG_MODEL
+        
+        print("Downloading turn detector model files...")
+        # Download the required files
+        files_to_download = ['config.json', 'model.safetensors', 'tokenizer.json', 'tokenizer_config.json']
+        
+        for filename in files_to_download:
+            print(f"Downloading {filename}...")
+            _download_from_hf_hub(HG_MODEL, filename, local_files_only=False)
+        
         print("Model files downloaded successfully!")
     except Exception as e:
         print(f"Error downloading models: {e}")
