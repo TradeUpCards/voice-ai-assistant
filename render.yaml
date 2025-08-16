@@ -4,7 +4,7 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python agent.py dev
+    startCommand: python agent.py download-files && python agent.py dev
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION

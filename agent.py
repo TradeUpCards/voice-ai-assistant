@@ -13,6 +13,7 @@ import asyncio
 from aiohttp import web
 import threading
 import time
+import sys
 
 load_dotenv()
 
@@ -74,7 +75,23 @@ def run_web_server():
         loop.run_until_complete(runner.cleanup())
         loop.close()
 
+def download_models():
+    """Download required model files for the turn detector"""
+    print("Downloading required model files...")
+    try:
+        # This will download the turn detector model
+        MultilingualModel()
+        print("Model files downloaded successfully!")
+    except Exception as e:
+        print(f"Error downloading models: {e}")
+        print("Continuing without turn detection...")
+
 if __name__ == "__main__":
+    # Check if we need to download models
+    if len(sys.argv) > 1 and sys.argv[1] == "download-files":
+        download_models()
+        sys.exit(0)
+    
     # Start health check server in a separate thread
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
