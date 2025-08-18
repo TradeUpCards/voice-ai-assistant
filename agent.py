@@ -1,100 +1,71 @@
+from livekit.agents import JobContext, WorkerOptions, cli, Agent, JobRequest
+from livekit.plugins import deepgram, google, elevenlabs
 from dotenv import load_dotenv
-from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions
-from livekit.plugins import (
-    google,
-    deepgram,
-    elevenlabs,
-    silero,
-    noise_cancellation,
-)
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+import asyncio
 
 load_dotenv()
 
-class Assistant(Agent):
-    def __init__(self) -> None:
-        super().__init__(instructions="You are a helpful voice AI assistant powered by Google Gemini. Be conversational, friendly, and helpful. Keep responses concise but informative.")
+class VoiceAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            instructions="You are Echo, a helpful voice AI assistant. Be conversational and friendly."
+        )
 
-async def request_fnc(req: agents.JobRequest):
+async def request_fnc(req: JobRequest):
     await req.accept(
-        name="Echo-agent",  # This sets the display name
-        identity="Echo (AI)"
+        name="Echo (AI)", # This is the display name in the UI
+        identity="echo-ai" # This is the internal identifier
     )
 
-async def entrypoint(ctx: agents.JobContext):
-    print(f"🚀 Agent entrypoint called with context: {ctx}")
-    print(f"🏠 Room: {ctx.room.name}")
-    print(f"👤 Room SID: {ctx.room.sid}")
+async def entrypoint(ctx: JobContext):
+    print("Voice agent starting up...")
+    
+    # Create agent session with basic plugins
+    from livekit.agents import AgentSession
     
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
-        llm=google.LLM(
-            model="gemini-2.0-flash-exp",
-            temperature=0.7,
-        ),
-        tts=elevenlabs.TTS(voice="7p1Ofvcwsv7UBPoFNcpI"),
-        vad=silero.VAD.load(),
-        # turn_detection=MultilingualModel(),  # Temporarily disabled due to Windows IPC issues
+        llm=google.LLM(model="gemini-2.0-flash-exp", temperature=0.7),
+        tts=elevenlabs.TTS(voice_id="1QHS0LeWK66KMx5bufOz"),  
     )
     
-    print("📡 Starting AgentSession...")
-    await session.start(
-        room=ctx.room,
-        agent=Assistant(),
-        room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC(),
-        ),
+    print("Agent session created, joining room...")
+    await session.start(room=ctx.room, agent=VoiceAgent())
+    
+    print("Agent connected to room, generating greeting...")
+    
+    # Generate a greeting when joining the room
+    print("Generating greeting...")
+    response = await session.generate_reply(
+        instructions="Say 'Hello, I am Echo, your AI assistant. How can I help you today?'"
     )
-    print("✅ AgentSession started successfully!")
     
-    # Generate a simple greeting without TTS
-    print("🤖 Agent joining room...")
-    print("📝 Generating greeting with Gemini...")
+    # Extract and send the response text to frontend
+    if hasattr(response, '_chat_items') and response._chat_items:
+        for item in response._chat_items:
+            if hasattr(item, 'content') and item.content:
+                response_text = item.content[0] if isinstance(item.content, list) else str(item.content)
+                print(f"Agent response: {response_text}")
+                
+                # Send response text to frontend via data channel
+                try:
+                    await ctx.room.local_participant.publish_data(
+                        payload=response_text.encode('utf-8'),
+                        topic="chat"
+                    )
+                    print("Response sent to frontend chat!")
+                except Exception as e:
+                    print(f"Error sending to frontend: {e}")
     
-    # Try to get a text response directly from Gemini
-    try:
-        response = await session.generate_reply(
-            instructions="Say 'Hello, I am Echo, your AI assistant."
-        )
-        print(f"✅ Gemini response generated: {response}")
-        
-        # Try to extract the actual text content
-        print("🔍 Attempting to extract response text...")
-        
-        # Method 1: Check if response has text attribute
-        if hasattr(response, 'text') and response.text:
-            print(f"📝 Response text: {response.text}")
-        
-        # Method 2: Check if response has content attribute
-        elif hasattr(response, 'content') and response.content:
-            print(f"📝 Response content: {response.content}")
-        
-        # Method 3: Check if response has message attribute
-        elif hasattr(response, 'message') and response.message:
-            print(f"📝 Response message: {response.message}")
-        
-        # Method 4: Check chat_items specifically
-        elif hasattr(response, 'chat_items') and response.chat_items:
-            print(f"📝 Chat items found: {response.chat_items}")
-            for i, item in enumerate(response.chat_items):
-                print(f"  Item {i}: {item}")
-                if hasattr(item, 'content'):
-                    print(f"    Content: {item.content}")
-                if hasattr(item, 'text'):
-                    print(f"    Text: {item.text}")
-        
-        # Method 5: Check all available attributes
-        else:
-            print(f"🔍 Response attributes: {dir(response)}")
-            print(f"🔍 Response type: {type(response)}")
-            
-    except Exception as e:
-        print(f"❌ Error generating response: {e}")
-        print("🤔 This suggests TTS is required for generate_reply to work")
+    print("Greeting generated successfully!")
+    
+    print("Agent connected to room, staying connected...")
+    # Keep agent alive in the room
+    while True:
+        await asyncio.sleep(1)
 
 if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(
+    cli.run_app(WorkerOptions(
         entrypoint_fnc=entrypoint,
         request_fnc=request_fnc
     ))
