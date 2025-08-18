@@ -25,7 +25,7 @@ async def request_fnc(req: agents.JobRequest):
 async def entrypoint(ctx: agents.JobContext):
     print(f"🚀 Agent entrypoint called with context: {ctx}")
     print(f"🏠 Room: {ctx.room.name}")
-    print(f"👤 Local participant: {ctx.room.local_participant.identity}")
+    print(f"👤 Room SID: {ctx.room.sid}")
     
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
@@ -35,7 +35,7 @@ async def entrypoint(ctx: agents.JobContext):
         ),
         tts=elevenlabs.TTS(voice="7p1Ofvcwsv7UBPoFNcpI"),
         vad=silero.VAD.load(),
-        turn_detection=MultilingualModel(),
+        # turn_detection=MultilingualModel(),  # Temporarily disabled due to Windows IPC issues
     )
     
     print("📡 Starting AgentSession...")
