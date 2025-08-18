@@ -13,8 +13,8 @@ class VoiceAgent(Agent):
 
 async def request_fnc(req: JobRequest):
     await req.accept(
-        name="Echo (AI)", # This is the display name in the UI
-        identity="echo-ai" # This is the internal identifier
+        name="echo-ai", # This is the internal identifier
+        identity="Echo (AI)" # This is the display name in the UI
     )
 
 async def entrypoint(ctx: JobContext):
