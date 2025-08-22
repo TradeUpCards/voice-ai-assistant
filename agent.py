@@ -55,73 +55,86 @@ async def request_fnc(req: JobRequest):
 
 
 async def entrypoint(ctx: JobContext):
-    print("⚙️  Starting Echo agent…")
-
-    # --- Build the voice stack ---
-    # Notes:
-    # - Deepgram set to English for slightly lower latency vs "multi"
-    # - ElevenLabs voice = your original voice_id + explicit model to avoid silent streams
-    # - Silero VAD resolves "VAD is not set" and speeds up end-of-turn detection
+    print("Voice agent starting up...")
+    
+    # Track latest finalized user input for reply context
+    last_user_snippet = None
+    last_user_name = "You"
+    
+    # Create agent session with basic plugins
+    from livekit.agents import AgentSession, RoomInputOptions, RoomOutputOptions
+    
     session = AgentSession(
-        stt=deepgram.STT(model="nova-3", language="en"),
+        stt=deepgram.STT(model="nova-3", language="multi"),
         llm=google.LLM(model="gemini-2.0-flash-exp", temperature=0.7),
-        tts=elevenlabs.TTS(
-            voice_id=ELEVEN_VOICE_ID,
-            model="eleven_turbo_v2_5",   # explicit model helps prevent "no audio frames" issues
-            # auto_mode=True,            # optional: can reduce latency on longer phrases
-        ),
-        vad=silero.VAD.load(),
+        tts=elevenlabs.TTS(voice_id="1QHS0LeWK66KMx5bufOz"),  
     )
-
-    agent = VoiceAgent()
-
-    # ----- Event wiring (before start) -----
-
-    # (A) Live STT (partials & finals)
+    
+    # Event: capture final user transcripts for reply context
     @session.on("user_input_transcribed")
-    def _on_user_input_transcribed(ev: UserInputTranscribedEvent):
-        print(f"📝 STT: {ev.transcript} (final={ev.is_final}, speaker={ev.speaker_id})")
+    def _on_user_input_transcribed(ev):
+        nonlocal last_user_snippet
+        try:
+            if getattr(ev, "is_final", False) and getattr(ev, "transcript", ""):
+                last_user_snippet = ev.transcript
+                print(f"📝 Final user transcript: {last_user_snippet}")
+        except Exception as e:
+            print("user_input_transcribed handler error:", e)
 
-    # (B) Forward assistant replies as chat data to the frontend
+    # Event: forward assistant replies to frontend via data channel with reply context
     @session.on("conversation_item_added")
-    def _on_conversation_item_added(ev: ConversationItemAddedEvent):
-        role = ev.item.role  # "user" or "assistant"
-        text = ev.item.text_content or ""
-        if role == "assistant" and text:
-            print(f"🤖 Agent reply: {text}")
-            payload = {
-                "type": "agent.chat",
-                "text": text,
-                "agentId": AGENT_NAME,
-                "ts": int(time.time() * 1000),
-            }
-            asyncio.create_task(
-                ctx.room.local_participant.publish_data(
-                    json.dumps(payload).encode("utf-8"),
-                    reliable=True,
-                    topic=CHAT_TOPIC,
+    def _on_conversation_item_added(ev):
+        try:
+            role = getattr(ev.item, "role", None)
+            text = getattr(ev.item, "text_content", "") or ""
+            if role == "assistant" and text:
+                payload = {
+                    "type": "agent.chat",
+                    "text": text,
+                    "agentId": "echo-ai",
+                    "ts": int(time.time() * 1000),
+                }
+                if last_user_snippet:
+                    payload["replyToName"] = last_user_name
+                    payload["replySnippet"] = last_user_snippet
+                print(f"🤖 Agent reply: {text}")
+                asyncio.create_task(
+                    ctx.room.local_participant.publish_data(
+                        json.dumps(payload).encode("utf-8"),
+                        reliable=True,
+                        topic="chat:agent",
+                    )
                 )
-            )
-
-    # ----- Start the session -----
+        except Exception as e:
+            print("conversation_item_added handler error:", e)
+    
+    print("Agent session created, joining room...")
     await session.start(
         room=ctx.room,
-        agent=agent,
-        room_input_options=RoomInputOptions(
-            audio_enabled=True,
-            text_enabled=True,  # if you also send text via lk.chat or custom UI
-        ),
-        room_output_options=RoomOutputOptions(
-            audio_enabled=True,             # ensure agent audio is published
-            transcription_enabled=True,     # send transcripts to clients
-            sync_transcription=True,        # align captions with TTS playback
-        ),
+        agent=VoiceAgent(),
+        room_input_options=RoomInputOptions(audio_enabled=True, text_enabled=True),
+        room_output_options=RoomOutputOptions(audio_enabled=True, transcription_enabled=True, sync_transcription=True),
     )
-
-    # Greeting (goes through the same pipeline: TTS + chat payload)
-    await session.say("Hello, I am Echo, your AI assistant. How can I help you today?")
-
-    print("✅ Echo is live. Waiting for turns…")
+    
+    print("Agent connected to room, sending greeting...")
+    greeting = "Hello, I am Echo, your AI assistant. How can I help you today?"
+    try:
+        greet_payload = {
+            "type": "agent.chat",
+            "text": greeting,
+            "agentId": "echo-ai",
+            "ts": int(time.time() * 1000),
+        }
+        await ctx.room.local_participant.publish_data(
+            json.dumps(greet_payload).encode("utf-8"),
+            reliable=True,
+            topic="chat:agent",
+        )
+    except Exception as e:
+        print("Error sending greeting via data channel:", e)
+    
+    print("Agent connected to room, staying connected...")
+    # Keep agent alive in the room
     while True:
         await asyncio.sleep(1)
 
