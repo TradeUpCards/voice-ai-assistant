@@ -60,6 +60,9 @@ async def entrypoint(ctx: JobContext):
     # Track latest finalized user input for reply context
     last_user_snippet = None
     last_user_name = "You"
+    last_turn_identity = None
+    last_turn_name = None
+    last_turn_id = None
     
     # Create agent session with basic plugins
     from livekit.agents import AgentSession, RoomInputOptions, RoomOutputOptions
@@ -67,8 +70,31 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
         llm=google.LLM(model="gemini-2.0-flash-exp", temperature=0.7),
-        tts=elevenlabs.TTS(voice_id="1QHS0LeWK66KMx5bufOz"),  
+        tts=elevenlabs.TTS(
+            voice_id=ELEVEN_VOICE_ID,
+            model="eleven_turbo_v2_5",
+        ),
+        vad=silero.VAD.load(),
     )
+    
+    # Capture 'agent:turn' data packets from clients
+    try:
+        @ctx.room.on("data_received")
+        def _on_data_received(data: bytes, participant, kind, topic: str | None = None):
+            nonlocal last_turn_identity, last_turn_name, last_turn_id
+            try:
+                if topic != "agent:turn":
+                    return
+                payload = json.loads(data.decode("utf-8")) if data else {}
+                last_turn_identity = payload.get("participantIdentity") or getattr(participant, "identity", None)
+                last_turn_name = payload.get("userName") or last_turn_identity
+                last_turn_id = payload.get("turnId")
+                print(f"↩️  Turn handshake: id={last_turn_id} identity={last_turn_identity} name={last_turn_name}")
+            except Exception as e:
+                print("data_received handler error:", e)
+    except Exception as e:
+        # If the SDK version doesn't support this event, continue without handshake
+        print("Note: data_received event binding failed or unsupported:", e)
     
     # Event: capture final user transcripts for reply context
     @session.on("user_input_transcribed")
@@ -91,18 +117,26 @@ async def entrypoint(ctx: JobContext):
                 payload = {
                     "type": "agent.chat",
                     "text": text,
-                    "agentId": "echo-ai",
+                    "agentId": AGENT_NAME,
                     "ts": int(time.time() * 1000),
                 }
+                # Prefer explicit turn handshake if present
+                if last_turn_identity or last_turn_name or last_turn_id:
+                    if last_turn_identity:
+                        payload["replyToIdentity"] = last_turn_identity
+                    if last_turn_name:
+                        payload["replyToName"] = last_turn_name
+                    if last_turn_id:
+                        payload["turnId"] = last_turn_id
+                # Also attach transcript snippet if captured
                 if last_user_snippet:
-                    payload["replyToName"] = last_user_name
                     payload["replySnippet"] = last_user_snippet
                 print(f"🤖 Agent reply: {text}")
                 asyncio.create_task(
                     ctx.room.local_participant.publish_data(
                         json.dumps(payload).encode("utf-8"),
                         reliable=True,
-                        topic="chat:agent",
+                        topic=CHAT_TOPIC,
                     )
                 )
         except Exception as e:
@@ -122,19 +156,18 @@ async def entrypoint(ctx: JobContext):
         greet_payload = {
             "type": "agent.chat",
             "text": greeting,
-            "agentId": "echo-ai",
+            "agentId": AGENT_NAME,
             "ts": int(time.time() * 1000),
         }
         await ctx.room.local_participant.publish_data(
             json.dumps(greet_payload).encode("utf-8"),
             reliable=True,
-            topic="chat:agent",
+            topic=CHAT_TOPIC,
         )
     except Exception as e:
         print("Error sending greeting via data channel:", e)
     
     print("Agent connected to room, staying connected...")
-    # Keep agent alive in the room
     while True:
         await asyncio.sleep(1)
 
