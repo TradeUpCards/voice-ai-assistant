@@ -77,27 +77,24 @@ async def entrypoint(ctx: JobContext):
         vad=silero.VAD.load(),
     )
     
-    # Capture 'agent:turn' data packets from clients (with exhaustive logging)
+    # Capture 'agent:turn' via data packets AND text streams per docs
     try:
-        @ctx.room.on("data_packet_received")
-        def _on_data_packet_received(data: bytes, participant, kind, topic: str | None = None):
+        # 1) Data packets (low-level)
+        @ctx.room.on("data_received")
+        def _on_data_received(pkt):
             nonlocal current_turn, last_user_snippet, last_user_name
             try:
-                raw = data or b""
-                decoded = None
-                try:
-                    decoded = raw.decode("utf-8", errors="replace")
-                except Exception:
-                    decoded = "<decode-error>"
-                pid = getattr(participant, "identity", None)
-                print(f"📨 data_packet_received: len={len(raw)} topic={topic} kind={kind} participant={pid} decoded={decoded}")
+                pid = getattr(getattr(pkt, "participant", None), "identity", None)
+                topic = getattr(pkt, "topic", None)
+                raw = getattr(pkt, "data", b"") or b""
+                print(f"📨 data_received topic={topic} participant={pid} kind={getattr(pkt,'kind',None)} len={len(raw)}")
                 if topic != "agent:turn":
                     return
-                payload = {}
                 try:
-                    payload = json.loads(decoded) if decoded else {}
+                    payload = json.loads(raw.decode("utf-8", "replace")) if raw else {}
                 except Exception as e:
-                    print("⚠️ JSON parse error for agent:turn:", e)
+                    print("⚠️ JSON parse error for agent:turn (packet):", e)
+                    payload = {}
                 pname = payload.get("userName") or payload.get("participantIdentity") or pid
                 current_turn = {
                     "id": payload.get("turnId"),
@@ -108,14 +105,12 @@ async def entrypoint(ctx: JobContext):
                 if isinstance(current_turn.get("text"), str) and current_turn["text"].strip():
                     last_user_snippet = current_turn["text"].strip()
                     last_user_name = pname
-                print(f"↩️  Turn handshake: id={current_turn['id']} identity={current_turn['identity']} name={current_turn['name']} text={(current_turn.get('text') or '')[:120]}")
+                print(f"↩️ Turn (packet): id={current_turn['id']} identity={current_turn['identity']} name={current_turn['name']} text={(current_turn.get('text') or '')[:120]}")
             except Exception as e:
-                print("data_packet_received handler error:", e)
+                print("data_received handler error:", e)
 
-        # Note: legacy data_received handler removed to avoid signature mismatch.
-        # We rely solely on data_packet_received (above) which provides participant identity.
     except Exception as e:
-        print("Note: binding room data handlers failed or unsupported:", e)
+        print("Note: binding room data/text handlers failed or unsupported:", e)
     
     # Event: capture final user transcripts for reply context
     @session.on("user_input_transcribed")
@@ -154,8 +149,11 @@ async def entrypoint(ctx: JobContext):
                         payload["replyToName"] = current_turn["name"]
                     if current_turn.get("id"):
                         payload["turnId"] = current_turn["id"]
+                    # Prefer explicit text from the turn; otherwise fall back to last finalized transcript
                     if current_turn.get("text"):
                         payload["replySnippet"] = current_turn["text"]
+                    elif last_user_snippet:
+                        payload["replySnippet"] = last_user_snippet
                     # reset once consumed
                     current_turn = {"id": None, "identity": None, "name": None, "text": None}
                 elif last_user_snippet:
@@ -180,7 +178,7 @@ async def entrypoint(ctx: JobContext):
                         topic=CHAT_TOPIC,
                     )
                 )
-                except Exception as e:
+        except Exception as e:
             print("conversation_item_added handler error:", e)
     
     print("Agent session created, joining room...")
